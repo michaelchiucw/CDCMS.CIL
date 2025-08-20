@@ -1,7 +1,7 @@
 /*
- *    CDCMS.java
- *    Copyright (C) 2018 University of Birmingham, Birmingham, United Kingdom
- *    @author Chun Wai Chiu (cxc1015@student.bham.ac.uk)
+ *    CDCMS_tnnls2020_OOBUOB.java
+ *    Copyright (C) 2025 University of Birmingham, Birmingham, United Kingdom
+ *    @author Chun Wai Chiu (michaelchiucw@gmail.com)
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by

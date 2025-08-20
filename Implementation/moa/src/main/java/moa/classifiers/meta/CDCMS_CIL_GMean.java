@@ -1,7 +1,7 @@
 /*
- *    CDCMS_CIL.java
- *    Copyright (C) 2018 University of Birmingham, Birmingham, United Kingdom
- *    @author Chun Wai Chiu (cxc1015@student.bham.ac.uk)
+ *    CDCMS_CIL_GMean.java
+ *    Copyright (C) 2025 University of Birmingham, Birmingham, United Kingdom
+ *    @author Chun Wai Chiu (michaelchiucw@gmail.com)
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -55,7 +55,7 @@ import moa.core.Measurement;
 import moa.core.Utils;
 import moa.options.ClassOption;
 
-public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClassClassifier {
+public class CDCMS_CIL_GMean extends AbstractClassifier implements MultiClassClassifier {
 
 	/**
 	 * Default serial version ID
@@ -83,9 +83,6 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 	public FloatOption fadingFactorOption = new FloatOption("fadingFactor", 'f',
 			"Fading Factor for prequential accuracy calculation on test chunk", 0.999, 0, 1);
 	
-	public FloatOption thetaOption = new FloatOption("theta", 't',
-            "The time decay factor for class size.", 0.99, 0, 1);
-	
 	public ClassOption descriptorsManagerOption = new ClassOption("descriptorsManager", 'm',
 			"Clustering method to use as descriptors manager.", Clusterer.class, "clustream.Clustream");
 	
@@ -96,8 +93,6 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 	
 	public ClassOption driftDetectorOption = new ClassOption("driftDetector", 'd',
             "Drift detection method to use.", ChangeDetector.class, "ADWINChangeDetector");
-	
-	public FlagOption isUOBOption = new FlagOption("isUOB", 'u', "isUOB?");
 	
 //	public ClassOption clustererOption = new ClassOption("clusterer", 'w',
 //			"Clusterer for clustering models in repository.", Clusterer.class,
@@ -145,7 +140,7 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 	
 	protected SamoaToWekaInstanceConverter instanceConverter;
 	
-	public CDCMS_GMean_OOBUOB() {
+	public CDCMS_CIL_GMean() {
 		this.clustererClasses = findWekaClustererClasses();
         String[] optionLabels = new String[clustererClasses.length];
         String[] optionDescriptions = new String[clustererClasses.length];
@@ -188,7 +183,7 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
 				this.classifierRandom, this.isUndersamplingDescriptors, this.numClasses);
 		
-		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, true, "NL");
 		this.ensemble_NL.add(new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
 				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
 				this.classifierRandom, this.isUndersamplingDescriptors, this.numClasses));
@@ -680,7 +675,7 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 				
 				this.ensemble_NL.clear();
 				
-				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, this.thetaOption.getValue(), this.isUOBOption.isSet(), false, "NH");
+				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, false, "NH");
 				
 				if (this.previous_drift_level == DRIFT_LEVEL.NORMAL && this.repository.size() > 1) {
 					this.candidate.resetLearning();
@@ -742,7 +737,7 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 					this.resetClusterer();
 				}
 				
-				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, true, "NL");
 				this.ensemble_NL.add(candidate);
 				
 				this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
@@ -810,16 +805,9 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 		
 		private boolean isWMEnsemble;
 		
-		private double[] classSizeEstimation;
-		private double[] classSizeb;
-		
-		private double theta;
-		
-		private boolean isUOB;
-		
 		private int numClasses;
 		
-		protected EnsembleWithInfo(double alpha, int numClasses, double theta, boolean isUOB, boolean isWMEnsemble, String name) {
+		protected EnsembleWithInfo(double alpha, int numClasses, boolean isWMEnsemble, String name) {
 			
 			this.name = name;
 			
@@ -827,13 +815,6 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 			
 			this.alpha = alpha;
 			this.numClasses = numClasses;		
-			
-			this.classSizeEstimation = null;
-			this.classSizeb = null;
-			
-			this.theta = theta;
-			
-			this.isUOB = isUOB;
 			
 			this.isWMEnsemble = isWMEnsemble;
 			
@@ -855,13 +836,6 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 			this.numClasses = source.numClasses;
 			this.estimations = source.estimations.clone();
 			this.b = source.b.clone();
-			
-			this.classSizeEstimation = source.classSizeEstimation.clone();;
-			this.classSizeb = source.classSizeb.clone();
-			
-			this.theta = source.theta;
-			
-			this.isUOB = source.isUOB;
 			
 			this.isWMEnsemble = source.isWMEnsemble;
 			
@@ -938,70 +912,6 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 			
 		}
 		
-		//-------------------------------OOB/UOB methods----------------------------
-		
-		protected void updateClassSize(Instance inst) {
-			if (this.classSizeEstimation == null) {
-				classSizeEstimation = new double[inst.numClasses()];
-
-				// <---start class size as equal for all classes
-				for (int i=0; i<classSizeEstimation.length; ++i) {
-					classSizeEstimation[i] = 1d/classSizeEstimation.length;
-				}
-			}
-			if (this.classSizeb == null) {
-				classSizeb = new double[inst.numClasses()];
-				
-				for (int i=0; i<classSizeEstimation.length; ++i) {
-					classSizeb[i] = 1d/classSizeb.length;
-				}
-			}
-			
-			for (int i=0; i<classSizeEstimation.length; ++i) {
-				classSizeEstimation[i] = thetaOption.getValue() * classSizeEstimation[i] + ((int) inst.classValue() == i ? 1d:0d);
-				classSizeb[i] = thetaOption.getValue() * classSizeb[i] + 1d;
-			}
-		}
-		
-		protected double getClassSize(int classIndex) {
-			return classSizeb[classIndex] > 0.0 ? classSizeEstimation[classIndex] / classSizeb[classIndex] : 0.0;
-		}
-		
-		public double calculateWeightBaseOnClassSize(Instance inst) {
-			double weight = 1d;
-			int targetClass = this.isUOB ? getMinorityClass() : getMajorityClass();
-			
-			weight = this.getClassSize(targetClass) / this.getClassSize((int) inst.classValue());
-
-			return weight;
-		}
-
-		// will result in an error if classSize is not initialised yet
-		public int getMajorityClass() {
-			int indexMaj = 0;
-
-			for (int i=1; i<classSizeEstimation.length; ++i) {
-				if (this.getClassSize(i) > this.getClassSize(indexMaj)) {
-					indexMaj = i;
-				}
-			}
-			return indexMaj;
-		}
-		
-		// will result in an error if classSize is not initialised yet
-		public int getMinorityClass() {
-			int indexMin = 0;
-
-			for (int i=1; i<classSizeEstimation.length; ++i) {
-				if (this.getClassSize(i) <= this.getClassSize(indexMin)) {
-					indexMin = i;
-				}
-			}
-			return indexMin;
-		}
-		
-		//----------------------------------------------------------------------
-		
 		protected void updatePrequentialGMean(Instance inst) {
 			double weight = inst.weight();
 			int trueClass = (int) inst.classValue();
@@ -1018,7 +928,7 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 		}
 		
 		protected double getRecallStatistic(int numClass) {
-			return b[numClass] > 0.0? estimations[numClass] / b[numClass] : 0.0;
+			return b[numClass] > 0.0 ? estimations[numClass] / b[numClass] : 0.0;
 		}
 		
 		protected double getPrequentialGMean() {
@@ -1061,22 +971,12 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 		public void resetLearningImpl() {
 			
 		}
-		
-		double count0 = 0;
-		double count1 = 0;
 
 		@Override
 		public void trainOnInstanceImpl(Instance inst) {
-			this.updateClassSize(inst);
-			double weight = this.calculateWeightBaseOnClassSize(inst);
-			
-			Instance weightedInst = (Instance) inst.copy();
-			weightedInst.setWeight(inst.weight() * weight);
-			
 			this.ensemble
 				.stream()
-				.forEach(committee -> committee.trainOnInstance(weightedInst));
-			
+				.forEach(committee -> committee.trainOnInstance(inst));
 		}
 
 		@Override
@@ -1153,6 +1053,7 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 			
 			this.originalHeader = source.originalHeader;
 			this.nom2BinHeader = source.nom2BinHeader;
+			
 		}
 		
 		public ClassifierWithInfo copy() {
@@ -1206,7 +1107,7 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 		}
 		
 		protected double getRecallStatistic(int numClass) {
-			return b[numClass] > 0.0? estimations[numClass] / b[numClass] : 0.0;
+			return b[numClass] > 0.0 ? estimations[numClass] / b[numClass] : 0.0;
 		}
 		
 		protected double getPrequentialGMean() {
@@ -1236,7 +1137,7 @@ public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClass
 
 		@Override
 		public boolean isRandomizable() {
-			return false;
+			return true;
 		}
 
 		@Override

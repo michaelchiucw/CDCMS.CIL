@@ -1,7 +1,7 @@
 /*
  *    CDCMS_CIL.java
- *    Copyright (C) 2018 University of Birmingham, Birmingham, United Kingdom
- *    @author Chun Wai Chiu (cxc1015@student.bham.ac.uk)
+ *    Copyright (C) 2025 University of Birmingham, Birmingham, United Kingdom
+ *    @author Chun Wai Chiu (michaelchiucw@gmail.com)
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -20,8 +20,12 @@
 package moa.classifiers.meta;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Random;
+
 import com.github.javacliparser.FlagOption;
 import com.github.javacliparser.FloatOption;
 import com.github.javacliparser.IntOption;
@@ -32,6 +36,7 @@ import com.yahoo.labs.samoa.instances.DenseInstance;
 import com.yahoo.labs.samoa.instances.Instance;
 import com.yahoo.labs.samoa.instances.Instances;
 import com.yahoo.labs.samoa.instances.SamoaToWekaInstanceConverter;
+import com.yahoo.labs.samoa.instances.WekaToSamoaInstanceConverter;
 
 import moa.classifiers.AbstractClassifier;
 import moa.classifiers.Classifier;
@@ -40,6 +45,9 @@ import moa.classifiers.core.diversitytest.QStatistics;
 import moa.classifiers.core.driftdetection.ChangeDetector;
 import moa.classifiers.core.driftdetection.DDM_GMean;
 import moa.classifiers.core.driftdetection.DDM_OCI;
+import moa.cluster.Cluster;
+import moa.cluster.Clustering;
+import moa.clusterers.Clusterer;
 import moa.core.AutoClassDiscovery;
 import moa.core.AutoExpandVector;
 import moa.core.DoubleVector;
@@ -47,18 +55,18 @@ import moa.core.Measurement;
 import moa.core.Utils;
 import moa.options.ClassOption;
 
-public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements MultiClassClassifier {
+public class CDCMS_CIL extends AbstractClassifier implements MultiClassClassifier {
 
 	/**
 	 * Default serial version ID
 	 */
 	private static final long serialVersionUID = 1L;
 	
-	public ClassOption baseLearnerOption = new ClassOption("baseLearner", 'l',
-            "The Base Learner", Classifier.class, "trees.HoeffdingTree -l NB"); //trees.HoeffdingTree -e 2000000 -g 100 -c 0.01
+	public IntOption randSeedOption = new IntOption("randomSeed", 'r',
+            "Seed for random behaviour of the classifier.", 1);
 	
-	public IntOption numClassesOption = new IntOption("numClasses", 'c',
-			"Number of possible class in the class label", 2, 1, Integer.MAX_VALUE);
+	public ClassOption baseLearnerOption = new ClassOption("baseLearner", 'l',
+            "The Base Learner.", Classifier.class, "trees.HoeffdingTree -l NB"); //trees.HoeffdingTree -e 2000000 -g 100 -c 0.01
 	
 	public IntOption poolSizeOption = new IntOption("ensembleSize", 'k',
 			"The maximum size of the ensemble.", 10, 1, Integer.MAX_VALUE);
@@ -66,22 +74,22 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 	public IntOption repositorySizeOption = new IntOption("repositorySizeMultiple", 'n',
 			"The repository size will be n*k", 10, 1, Integer.MAX_VALUE);
 	
-	public IntOption windowSizeOption = new IntOption("windowSize", 'b',
-			"The window size used for classifier creation and evaluation.", 500, 1, Integer.MAX_VALUE);
+	public IntOption timeStepsIntervalOption = new IntOption("timeStepsInterval", 'b',
+			"The number of time steps after drift and before model recovery or between evaluation on ensemble_NL", 500, 1, Integer.MAX_VALUE);
 	
 	public FloatOption fadingFactorOption = new FloatOption("fadingFactor", 'f',
 			"Fading Factor for prequential accuracy calculation on test chunk", 0.999, 0, 1);
 	
-	public FloatOption thetaOption = new FloatOption("theta", 't',
-            "The time decay factor for class size.", 0.99, 0, 1);
+	public ClassOption descriptorsManagerOption = new ClassOption("descriptorsManager", 'm',
+			"Clustering method to use as descriptors manager.", Clusterer.class, "clustream.Clustream");
+	
+	public FlagOption isUndersamplingDescriptorsOption = new FlagOption("isUndersamplingDescriptors", 'z', "isUndersamplingDescriptors?");
 	
 	public FloatOption similarityThresholdOption = new FloatOption("similarityThreshold", 's',
 			"similarityThreshold", 0.8, 0.0, 1.0);
 	
 	public ClassOption driftDetectorOption = new ClassOption("driftDetector", 'd',
             "Drift detection method to use.", ChangeDetector.class, "ADWINChangeDetector");
-	
-	public FlagOption isUOBOption = new FlagOption("isUOB", 'u', "isUOB?");
 	
 //	public ClassOption clustererOption = new ClassOption("clusterer", 'w',
 //			"Clusterer for clustering models in repository.", Clusterer.class,
@@ -94,9 +102,9 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
             "");
 			//-I 100 -N -1 -X 10 -max -1 -ll-cv 1.0E-6 -ll-iter 1.0E-6 -M 1.0E-6 -K 10 -num-slots 1 -S 100
 	
-	protected double similarityThreshold;
+    protected boolean isUndersamplingDescriptors;
 	
-	protected int numClasses;
+	protected double similarityThreshold;
 	
 	protected EnsembleWithInfo ensemble_NL;
 	
@@ -111,8 +119,7 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 	
 	protected ChangeDetector driftDetector;
 	
-	protected List<Instance> instWindow;
-	protected int instSeenAfterDrift;
+	protected int afterDriftInstCount;
 	
 	private Instances predictionErrorByClassifierFromRepo;
 	
@@ -128,7 +135,7 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 	
 	protected SamoaToWekaInstanceConverter instanceConverter;
 	
-	public CDCMS_GMean_OOBUOB_backup() {
+	public CDCMS_CIL() {
 		this.clustererClasses = findWekaClustererClasses();
         String[] optionLabels = new String[clustererClasses.length];
         String[] optionDescriptions = new String[clustererClasses.length];
@@ -150,25 +157,29 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 	
 	@Override
 	public boolean isRandomizable() {
-		return false;
+		return true;
 	}
 	
 	@Override
 	public void resetLearningImpl() {
 		
+		this.randomSeed = this.randSeedOption.getValue();
+		this.classifierRandom = new Random(this.randomSeed);
+		this.isUndersamplingDescriptors = this.isUndersamplingDescriptorsOption.isSet();
+		
 		// *-1, because more negative means more diverse in QStatistics.
 		this.similarityThreshold = this.similarityThresholdOption.getValue() * -1;
-		
-		this.numClasses = this.numClassesOption.getValue();
 		
 		this.driftDetector = ((ChangeDetector) getPreparedClassOption(this.driftDetectorOption)).copy();
 		
 		this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
-												this.fadingFactorOption.getValue(), this.numClasses);
+				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
+				this.classifierRandom, this.isUndersamplingDescriptors);
 		
-		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), true, "NL");
 		this.ensemble_NL.add(new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
-													this.fadingFactorOption.getValue(), this.numClasses));
+				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
+				this.classifierRandom, this.isUndersamplingDescriptors));
 		
 		this.ensemble_OL = null;
 		this.ensemble_NH = null;
@@ -176,8 +187,7 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		this.maxRepositorySize = this.repositorySizeOption.getValue() * this.poolSizeOption.getValue();
 		this.repository = new ArrayList<ClassifierWithInfo>(this.maxRepositorySize);
 		
-		this.instWindow = new ArrayList<Instance>(this.windowSizeOption.getValue());
-		this.instSeenAfterDrift = 0;
+		this.afterDriftInstCount = 0;
 		
 		//====================================================================
 		this.resetClusterer();
@@ -223,29 +233,29 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 	//TODO: For debugging:
 	private void showPrequentialAccuracy() {
 		
-		double gmeanSum = this.ensemble_NL.getPrequentialGMean() +
-				(this.ensemble_NH == null ? 0.0 : this.ensemble_NH.getPrequentialGMean()) +
-				(this.ensemble_OL == null ? 0.0 :this.ensemble_OL.getPrequentialGMean());
+		double accuracySum = this.ensemble_NL.getPrequentialAccuracy() +
+				(this.ensemble_NH == null ? 0.0 : this.ensemble_NH.getPrequentialAccuracy()) +
+				(this.ensemble_OL == null ? 0.0 :this.ensemble_OL.getPrequentialAccuracy());
 			
 		System.out.println("proceed Instances: " + super.trainingWeightSeenByModel);
 		
 		if (this.ensemble_OL != null) {
-			System.out.println("OL | Prequential Accuracy: " + this.ensemble_OL.getPrequentialGMean() + " | size: " + this.ensemble_OL.size() +
-								" | weight: " + (this.ensemble_OL.getPrequentialGMean() / gmeanSum));
+			System.out.println("OL | Prequential Accuracy: " + this.ensemble_OL.getPrequentialAccuracy() + " | size: " + this.ensemble_OL.size() +
+								" | weight: " + (this.ensemble_OL.getPrequentialAccuracy() / accuracySum));
 		} else {
 			System.out.println("OL | NULL");
 		}
 		
 		if (this.ensemble_NH != null) {
-			System.out.println("NH | Prequential Accuracy: " + this.ensemble_NH.getPrequentialGMean() + " | size: " + this.ensemble_NH.size() +
-								" | weight: " + (this.ensemble_NH.getPrequentialGMean() / gmeanSum));
+			System.out.println("NH | Prequential Accuracy: " + this.ensemble_NH.getPrequentialAccuracy() + " | size: " + this.ensemble_NH.size() +
+								" | weight: " + (this.ensemble_NH.getPrequentialAccuracy() / accuracySum));
 		} else {
 			System.out.println("NH | NULL");
 		}
 			
 		if (this.ensemble_NL != null) {
-			System.out.println("NL | Prequential Accuracy: " + this.ensemble_NL.getPrequentialGMean() + " | size: " + this.ensemble_NL.size() +
-								" | weight: " + (this.ensemble_NL.getPrequentialGMean() / gmeanSum));
+			System.out.println("NL | Prequential Accuracy: " + this.ensemble_NL.getPrequentialAccuracy() + " | size: " + this.ensemble_NL.size() +
+								" | weight: " + (this.ensemble_NL.getPrequentialAccuracy() / accuracySum));
 		} else {
 			System.out.println("NL | NULL");
 		}
@@ -256,11 +266,11 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		
 		double[] to_return = null;
 		
-		double gmean_NL = this.ensemble_NL.getPrequentialGMean();
-		double gmean_OL = this.ensemble_OL == null ? 0.0 : this.ensemble_OL.getPrequentialGMean();
-		double gmean_NH = this.ensemble_NH == null ? 0.0 : this.ensemble_NH.getPrequentialGMean();
+		double accuracy_NL = this.ensemble_NL.getPrequentialAccuracy();
+		double accuracy_OL = this.ensemble_OL == null ? 0.0 : this.ensemble_OL.getPrequentialAccuracy();
+		double accuracy_NH = this.ensemble_NH == null ? 0.0 : this.ensemble_NH.getPrequentialAccuracy();
 		
-		double gmeanSum = gmean_OL + gmean_NH + gmean_NL;
+		double accuracySum = accuracy_OL + accuracy_NH + accuracy_NL;
 		
 		DoubleVector combinedVote = new DoubleVector();
 		
@@ -273,31 +283,31 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		switch (this.drift_level) {
 			case NORMAL:
 				if (this.ensemble_OL != null && this.ensemble_NH != null &&
-						gmean_NL < gmean_OL && gmean_NL < gmean_NH) {
+						accuracy_NL < accuracy_OL && accuracy_NL < accuracy_NH) {
 					
-					if (gmean_OL > 0.0) {
+					if (this.ensemble_OL.estimation > 0.0) {
 						DoubleVector vote = new DoubleVector(this.ensemble_OL.getVotesForInstance(inst));
 						if (vote.sumOfValues() > 0.0) {
 							vote.normalize();
-							vote.scaleValues(gmean_OL / gmeanSum);
+							vote.scaleValues(accuracy_OL / accuracySum);
 							combinedVote.addValues(vote);
 //							a = true;
 						}
 					}
-					if (gmean_NH > 0.0) {
+					if (this.ensemble_NH.estimation > 0.0) {
 						DoubleVector vote = new DoubleVector(this.ensemble_NH.getVotesForInstance(inst));
 						if (vote.sumOfValues() > 0.0) {
 							vote.normalize();
-							vote.scaleValues(gmean_NH / gmeanSum);
+							vote.scaleValues(accuracy_NH / accuracySum);
 							combinedVote.addValues(vote);
 //							b = true;
 						}
 					}
-					if (gmean_NL > 0.0) {
+					if (this.ensemble_NL.estimation > 0.0) {
 						DoubleVector vote = new DoubleVector(this.ensemble_NL.getVotesForInstance(inst));
 						if (vote.sumOfValues() > 0.0) {
 							vote.normalize();
-							vote.scaleValues(gmean_NL / gmeanSum);
+							vote.scaleValues(accuracy_NL / accuracySum);
 							combinedVote.addValues(vote);
 //							c = true;
 						}
@@ -317,29 +327,29 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 				break;
 			case OUTCONTROL:
 				
-				if (gmean_OL > 0.0) {
+				if (this.ensemble_OL.estimation > 0.0) {
 					DoubleVector vote = new DoubleVector(this.ensemble_OL.getVotesForInstance(inst));
 					if (vote.sumOfValues() > 0.0) {
 						vote.normalize();
-						vote.scaleValues(gmean_OL / gmeanSum);
+						vote.scaleValues(accuracy_OL / accuracySum);
 						combinedVote.addValues(vote);
 //						a = true;
 					}
 				}
-				if (gmean_NH > 0.0) {
+				if (this.ensemble_NH.estimation > 0.0) {
 					DoubleVector vote = new DoubleVector(this.ensemble_NH.getVotesForInstance(inst));
 					if (vote.sumOfValues() > 0.0) {
 						vote.normalize();
-						vote.scaleValues(gmean_NH / gmeanSum);
+						vote.scaleValues(accuracy_NH / accuracySum);
 						combinedVote.addValues(vote);
 //						b = true;
 					}
 				}
-				if (gmean_NL > 0.0) {
+				if (this.ensemble_NL.estimation > 0.0) {
 					DoubleVector vote = new DoubleVector(this.ensemble_NL.getVotesForInstance(inst));
 					if (vote.sumOfValues() > 0.0) {
 						vote.normalize();
-						vote.scaleValues(gmean_NL / gmeanSum);
+						vote.scaleValues(accuracy_NL / accuracySum);
 						combinedVote.addValues(vote);
 //						c = true;
 					}
@@ -390,7 +400,7 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		this.clusterer.buildClusterer(wekaInstancesNoClass);
 				
 		// Use forEachOrdered for debugging purposes.
-		wekaInstancesNoClass.parallelStream().forEach(wekaInstNoClass -> {
+		wekaInstancesNoClass.stream().forEach(wekaInstNoClass -> {
 			try {
 				int clusterLabel = this.clusterer.clusterInstance(wekaInstNoClass);
 				int instIndex = wekaInstancesNoClass.indexOf(wekaInstNoClass);
@@ -424,7 +434,10 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		double[] qStatResults = new double[this.repository.size()];
 		
 		for (int i = 0; i < qStatResults.length; ++i) {
-			qStatResults[i] = QStatistics.getQScoreForTwo(this.instWindow, target.getActualClassifier(), this.repository.get(i).getActualClassifier());
+			List<ClassifierWithInfo> targetModels = Arrays.asList(target, this.repository.get(i));
+			int targetNumOfDescriptors = this.getMostNumDescriptors(targetModels);
+			List<Instance> testBatch = this.mergedAllCentreAsList(targetModels, targetNumOfDescriptors);
+			qStatResults[i] = QStatistics.getQScoreForTwo(testBatch, target.getActualClassifier(), this.repository.get(i).getActualClassifier());
 		}
 		
 		int maxQIndex = -1;
@@ -460,18 +473,46 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 //		System.out.println("qStatResults[maxQIndex]: " + qStatResults[maxQIndex]);
 		return qStatResults[maxQIndex] >= this.similarityThreshold ? maxQIndex : -1;
 	}
+	
+	private int getMostNumDescriptors(List<ClassifierWithInfo> classifiers) {
+
+		ArrayList<Integer> allSizes = new ArrayList<Integer>(classifiers.size() * 2);
+		for (ClassifierWithInfo classifier : classifiers) {
+			allSizes.add(classifier.getNumberOfDescriptors(0));
+			allSizes.add(classifier.getNumberOfDescriptors(1));
+		}
+		
+		return isUndersamplingDescriptors ? Collections.min(allSizes) : Collections.max(allSizes);
+	}
+	
+	private List<Instance> mergedAllCentreAsList(List<ClassifierWithInfo> classifiers, int targetNumDescriptors) {
+		List<Instance> mergedSet = new ArrayList<Instance>();
+		for (ClassifierWithInfo classifier : classifiers) {
+			if (classifier.getNumberOfDescriptors(0) > 0) {
+				mergedSet.addAll(classifier.getDescriptorsCentre(0, targetNumDescriptors));
+			}
+			if (classifier.getNumberOfDescriptors(1) > 0) {
+				mergedSet.addAll(classifier.getDescriptorsCentre(1, targetNumDescriptors));
+			}
+		}
+		return mergedSet;
+	}
 
 	@Override
 	public void trainOnInstanceImpl(Instance inst) {
 		
-		this.saveFIFO(this.instWindow, inst, this.windowSizeOption.getValue());
+		this.afterDriftInstCount++;
 		
 		double prediction = Utils.maxIndex(this.ensemble_NL.getVotesForInstance(inst)) == inst.classValue() ? 0.0 : 1.0;
 //		this.driftDetector.input(prediction);
-		if (this.driftDetector instanceof DDM_GMean) {
+		/**
+		 * DDM_OCI has to put before DDM_GMean because of polymorphism.
+		 * DDM_OCI is a subclass of DDM_GMean
+		 */
+		if (this.driftDetector instanceof DDM_OCI) {
+			((DDM_OCI) this.driftDetector).input(prediction, inst);
+        } else if (this.driftDetector instanceof DDM_GMean) {
         	((DDM_GMean) this.driftDetector).input(prediction, inst);
-        } else if (this.driftDetector instanceof DDM_OCI) {
-        	((DDM_OCI) this.driftDetector).input(prediction, inst);
         } else {
         	this.driftDetector.input(prediction);
         }
@@ -485,18 +526,20 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 			case NORMAL:
 //				System.out.println("NORMAL");
 
-				if (this.instSeenAfterDrift == this.windowSizeOption.getValue() && this.changeDetected > 0 && this.repository.size() > 0) {
-//					System.out.println("this.instSeenAfterDrift: " + this.instSeenAfterDrift);
+				if (this.afterDriftInstCount == this.timeStepsIntervalOption.getValue() && this.changeDetected > 0 && this.repository.size() > 0) {
+//					System.out.println("this.afterDriftInstCount: " + this.afterDriftInstCount);
 					
 					// determine the new model belongs to which cluster.
 					// if CAN be determined: ensemble_NL = {C} ∪ {ClosestCluster.getModels(C, B)}
 					// otherwise ensemble_NL = {C}
 					
-					this.initPredictionErrorStorage(this.instWindow.size(), this.repository.size()+1);
+					int targetNumOfClusteringDescriptors = this.getMostNumDescriptors(this.repository);
+					List<Instance> mergedSet = this.mergedAllCentreAsList(this.repository, targetNumOfClusteringDescriptors);
+					this.initPredictionErrorStorage(mergedSet.size(), this.repository.size()+1);
 					for (ClassifierWithInfo classifier : this.repository) {
-						this.predictionErrorByClassifierFromRepo.add(classifier.makePredictionOnInstances(this.instWindow));
+						this.predictionErrorByClassifierFromRepo.add(classifier.makePredictionOnInstances(mergedSet));
 					}
-					this.predictionErrorByClassifierFromRepo.add(this.ensemble_NL.ensemble.get(0).makePredictionOnInstances(this.instWindow));
+					this.predictionErrorByClassifierFromRepo.add(this.ensemble_NL.ensemble.get(0).makePredictionOnInstances(mergedSet));
 			
 					try {
 						this.clusteringModels();
@@ -537,7 +580,7 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 					this.resetClusterer();
 					
 					
-				} else if (this.instSeenAfterDrift % this.windowSizeOption.getValue() == 0 && this.trainingHasStarted()) {
+				} else if (this.afterDriftInstCount % this.timeStepsIntervalOption.getValue() == 0 && this.trainingHasStarted()) {
 
 					if (this.ensemble_NL.size() >= this.poolSizeOption.getValue()) {
 						
@@ -552,7 +595,7 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		 							worstInNL.trainingWeightSeenByModel() > this.repository.get(mostSimilarIndex).trainingWeightSeenByModel()) {
 		 						
 		 						this.repository.remove(mostSimilarIndex);
-								worstInNL.resetPrequentialGMean();
+								worstInNL.resetPrequentialAccuracy();
 								this.repository.add(worstInNL);
 								
 							} else {
@@ -562,7 +605,7 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 							}
 
 						} else {
-							worstInNL.resetPrequentialGMean();
+							worstInNL.resetPrequentialAccuracy();
 							this.repository.add(worstInNL);
 						}
 						
@@ -573,10 +616,11 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 //					System.out.println("Ensemble Size: " + this.ensemble_NL.size() + " | Repo Size: " + this.repository.size());
 					
 					this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
-							this.fadingFactorOption.getValue(), this.numClasses);
+							((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
+							this.classifierRandom, this.isUndersamplingDescriptors);
 					
 				} else {
-					this.candidate.updatePrequentialGMean(inst);
+					this.candidate.updatePrequentialAccuracy(inst);
 					this.candidate.trainOnInstance(inst);
 				}
 				
@@ -617,24 +661,26 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 				for (int i = 0; i < isAdd.length; ++i) {
 					if (isAdd[i]) {
 						ClassifierWithInfo toAdd = this.ensemble_NL.getActualEnsemble().get(i).copy();
-						toAdd.resetPrequentialGMean();
+						toAdd.resetPrequentialAccuracy();
 						this.repository.add(toAdd);
 					}
 				}
 				
 				this.ensemble_NL.clear();
 				
-				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, this.thetaOption.getValue(), this.isUOBOption.isSet(), false, "NH");
+				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), false, "NH");
 				
 				if (this.previous_drift_level == DRIFT_LEVEL.NORMAL && this.repository.size() > 1) {
 					this.candidate.resetLearning();
 					
 					// Do clustering
 					// Create ensemble_NH
-						
-					this.initPredictionErrorStorage(this.instWindow.size(), this.repository.size());
+					
+					int targetNumOfClusteringDescriptors = this.getMostNumDescriptors(this.repository);
+					List<Instance> mergedSet = this.mergedAllCentreAsList(this.repository, targetNumOfClusteringDescriptors);
+					this.initPredictionErrorStorage(mergedSet.size(), this.repository.size());
 					for (ClassifierWithInfo classifier : this.repository) {
-						this.predictionErrorByClassifierFromRepo.add(classifier.makePredictionOnInstances(this.instWindow));
+						this.predictionErrorByClassifierFromRepo.add(classifier.makePredictionOnInstances(mergedSet));
 					}
 						
 					try {
@@ -684,18 +730,18 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 					this.resetClusterer();
 				}
 				
-				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), true, "NL");
 				this.ensemble_NL.add(candidate);
 				
 				this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
-														this.fadingFactorOption.getValue(), this.numClasses);
+						((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
+						this.classifierRandom, this.isUndersamplingDescriptors);
 				
-				this.ensemble_NH.resetPrequentialGMean();
-				this.ensemble_NL.resetPrequentialGMean();
-				this.ensemble_OL.resetPrequentialGMean();
+				this.ensemble_NH.resetPrequentialAccuracy();
+				this.ensemble_NL.resetPrequentialAccuracy();
+				this.ensemble_OL.resetPrequentialAccuracy();
 				
-				this.instWindow.clear();
-				this.instSeenAfterDrift = 0;
+				this.afterDriftInstCount = 0;
 				
 				this.previous_drift_level = DRIFT_LEVEL.OUTCONTROL;
 				
@@ -709,12 +755,12 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		}
 		
 		if (this.ensemble_OL != null) {
-			this.ensemble_OL.updatePrequentialGMean(inst);
+			this.ensemble_OL.updatePrequentialAccuracy(inst);
 		}
 		if (this.ensemble_NH != null) {
-			this.ensemble_NH.updatePrequentialGMean(inst);
+			this.ensemble_NH.updatePrequentialAccuracy(inst);
 		}
-		this.ensemble_NL.updatePrequentialGMean(inst);
+		this.ensemble_NL.updatePrequentialAccuracy(inst);
 		this.ensemble_NL.trainOnInstance(inst);
 	}
 
@@ -739,14 +785,6 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
         return finalClasses.toArray(new Class<?>[finalClasses.size()]);
     }
 	
-	private void saveFIFO(List<Instance> buffer, Instance toAdd, int maxSize) {
-		while (buffer.size() >= maxSize) {
-			buffer.remove(0);
-		}
-		buffer.add(toAdd);
-		this.instSeenAfterDrift++;
-	}
-	
 	protected class EnsembleWithInfo extends AbstractClassifier {
 		
 		// TODO: For debugging
@@ -755,39 +793,23 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		private List<ClassifierWithInfo> ensemble;
 		
 		private double alpha;
-		private double[] estimations;
-		private double[] b;
+		private double estimation;
+		private double b;
 		
 		private boolean isWMEnsemble;
 		
-		private double[] classSizeEstimation;
-		private double[] classSizeb;
-		
-		private double theta;
-		
-		private boolean isUOB;
-		
-		private int numClasses;
-		
-		protected EnsembleWithInfo(double alpha, int numClasses, double theta, boolean isUOB, boolean isWMEnsemble, String name) {
+		protected EnsembleWithInfo(double prequentialAccFadingFactor, boolean isWMEnsemble, String name) {
 			
 			this.name = name;
 			
 			this.ensemble = new ArrayList<ClassifierWithInfo>();
 			
-			this.alpha = alpha;
-			this.numClasses = numClasses;		
-			
-			this.classSizeEstimation = null;
-			this.classSizeb = null;
-			
-			this.theta = theta;
-			
-			this.isUOB = isUOB;
+			this.alpha = prequentialAccFadingFactor;
+			this.estimation = 0.0;
+			this.b = 0.0;
 			
 			this.isWMEnsemble = isWMEnsemble;
 			
-			this.resetPrequentialGMean();
 		}
 		
 		/*
@@ -802,16 +824,8 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 			this.ensemble = new ArrayList<ClassifierWithInfo>(source.ensemble);
 			
 			this.alpha = source.alpha;
-			this.numClasses = source.numClasses;
-			this.estimations = source.estimations.clone();
-			this.b = source.b.clone();
-			
-			this.classSizeEstimation = source.classSizeEstimation.clone();;
-			this.classSizeb = source.classSizeb.clone();
-			
-			this.theta = source.theta;
-			
-			this.isUOB = source.isUOB;
+			this.estimation = source.estimation;
+			this.b = source.b;
 			
 			this.isWMEnsemble = source.isWMEnsemble;
 			
@@ -832,10 +846,8 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		
 		protected void clear() {
 			this.ensemble.clear();
-			for (int i = 0; i < numClasses; ++i) {
-				this.estimations[i] = 0.0;
-				this.b[i] = 0.0;
-			}
+			this.estimation = 0.0;
+			this.b = 0.0;
 		}
 		
 		protected void add(ClassifierWithInfo toAdd) {
@@ -845,7 +857,7 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		protected ClassifierWithInfo removeWorst() {
 			ClassifierWithInfo worst = this.ensemble
 										   .stream()
-										   .min(Comparator.comparingDouble(x -> x.getPrequentialGMean()))
+										   .min(Comparator.comparingDouble(x -> x.getPrequentialAccuracy()))
 										   .get();
 			
 //			for(int i = 0; i < this.ensemble.size(); ++i) {
@@ -860,20 +872,20 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		
 		public double[] getVotesForInstance(Instance inst) {
 			
-			double gmeanSum = this.ensemble
-									 .parallelStream()
-									 .mapToDouble(ClassifierWithInfo::getPrequentialGMean)
+			double accuracySum = this.ensemble
+									 .stream()
+									 .mapToDouble(ClassifierWithInfo::getPrequentialAccuracy)
 									 .sum();
 			
 			DoubleVector combinedVote = new DoubleVector();
 			for (int i = 0; i < ensemble.size(); ++i) {
-				if (ensemble.get(i).getPrequentialGMean() > 0.0) {
+				if (ensemble.get(i).estimation > 0.0) {
 					DoubleVector vote = new DoubleVector(ensemble.get(i).getVotesForInstance(inst));
 						
 					if (vote.sumOfValues() > 0.0) {
 						vote.normalize();
 						if (isWMEnsemble) {
-							vote.scaleValues(ensemble.get(i).getPrequentialGMean() / gmeanSum);
+							vote.scaleValues(ensemble.get(i).getPrequentialAccuracy() / accuracySum);
 						}
 						combinedVote.addValues(vote);
 					}
@@ -888,118 +900,28 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 			
 		}
 		
-		//-------------------------------OOB/UOB methods----------------------------
-		
-		protected void updateClassSize(Instance inst) {
-			if (this.classSizeEstimation == null) {
-				classSizeEstimation = new double[inst.numClasses()];
+		protected void updatePrequentialAccuracy(Instance inst) {
+			this.estimation = this.alpha * this.estimation +
+							(Utils.maxIndex(this.getVotesForInstance(inst)) == (int) inst.classValue() ? 1.0 : 0.0);
+			
+			this.b = this.alpha * this.b + 1.0;
 
-				// <---start class size as equal for all classes
-				for (int i=0; i<classSizeEstimation.length; ++i) {
-					classSizeEstimation[i] = 1d/classSizeEstimation.length;
-				}
-			}
-			if (this.classSizeb == null) {
-				classSizeb = new double[inst.numClasses()];
-				
-				for (int i=0; i<classSizeEstimation.length; ++i) {
-					classSizeb[i] = 1d/classSizeb.length;
-				}
-			}
+			this.ensemble
+				.stream()
+				.forEach(committee -> committee.updatePrequentialAccuracy(inst));
+		}
+		
+		protected double getPrequentialAccuracy() {
+			return b > 0.0 ? this.estimation / this.b : 0.0;
+		}
+		
+		protected void resetPrequentialAccuracy() {
+			this.estimation = 0.0;
+			this.b = 0.0;
 			
-			for (int i=0; i<classSizeEstimation.length; ++i) {
-				classSizeEstimation[i] = thetaOption.getValue() * classSizeEstimation[i] + ((int) inst.classValue() == i ? 1d:0d);
-				classSizeb[i] = thetaOption.getValue() * classSizeb[i] + 1d;
-			}
-		}
-		
-		protected double getClassSize(int classIndex) {
-			return classSizeb[classIndex] > 0.0 ? classSizeEstimation[classIndex] / classSizeb[classIndex] : 0.0;
-		}
-		
-		public double calculateWeightBaseOnClassSize(Instance inst) {
-			double weight = 1d;
-			int targetClass = this.isUOB ? getMinorityClass() : getMajorityClass();
-			
-			weight = this.getClassSize(targetClass) / this.getClassSize((int) inst.classValue());
-
-			return weight;
-		}
-
-		// will result in an error if classSize is not initialised yet
-		public int getMajorityClass() {
-			int indexMaj = 0;
-
-			for (int i=1; i<classSizeEstimation.length; ++i) {
-				if (this.getClassSize(i) > this.getClassSize(indexMaj)) {
-					indexMaj = i;
-				}
-			}
-			return indexMaj;
-		}
-		
-		// will result in an error if classSize is not initialised yet
-		public int getMinorityClass() {
-			int indexMin = 0;
-
-			for (int i=1; i<classSizeEstimation.length; ++i) {
-				if (this.getClassSize(i) <= this.getClassSize(indexMin)) {
-					indexMin = i;
-				}
-			}
-			return indexMin;
-		}
-		
-		//----------------------------------------------------------------------
-		
-		protected void updatePrequentialGMean(Instance inst) {
-			double weight = inst.weight();
-			int trueClass = (int) inst.classValue();
-			
-			if (weight > 0.0) {
-				int predictedClass = Utils.maxIndex(this.getVotesForInstance(inst));
-				this.estimations[trueClass] = this.alpha * this.estimations[trueClass] + (predictedClass == trueClass ? weight : 0.0);
-				this.b[trueClass] = this.alpha * this.b[trueClass] + 1.0;
-				
-				this.ensemble
-					.parallelStream()
-					.forEach(committee -> committee.updatePrequentialGMean(inst));
-			}
-		}
-		
-		protected double getRecallStatistic(int numClass) {
-			return b[numClass] > 0.0? estimations[numClass] / b[numClass] : 0.0;
-		}
-		
-		protected double getPrequentialGMean() {
-			double gmean = 0.0;
-			
-			for (int i = 0; i < this.numClasses; ++i) {
-				if (i == 0) {
-					gmean = this.getRecallStatistic(i);
-				} else {
-					gmean *= this.getRecallStatistic(i);
-				}
-			}
-			gmean = Math.pow(gmean, (1.0/this.numClasses));
-			
-			return gmean;
-		}
-		
-		protected void resetPrequentialGMean() {
-			this.estimations = new double[this.numClasses];
-			this.b = new double[this.numClasses];
-			
-			for (int i = 0; i < numClasses; ++i) {
-				this.estimations[i] = 0.0;
-				this.b[i] = 0.0;
-			}
-			
-			if (this.ensemble.size() > 0) {
-				this.ensemble
-					.parallelStream()
-					.forEach(committee -> committee.resetPrequentialGMean());
-			}
+			this.ensemble
+				.stream()
+				.forEach(committee -> committee.resetPrequentialAccuracy());
 		}
 
 		@Override
@@ -1011,22 +933,12 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		public void resetLearningImpl() {
 			
 		}
-		
-		double count0 = 0;
-		double count1 = 0;
 
 		@Override
 		public void trainOnInstanceImpl(Instance inst) {
-			this.updateClassSize(inst);
-			double weight = this.calculateWeightBaseOnClassSize(inst);
-			
-			Instance weightedInst = (Instance) inst.copy();
-			weightedInst.setWeight(inst.weight() * weight);
-			
 			this.ensemble
-				.parallelStream()
-				.forEach(committee -> committee.trainOnInstance(weightedInst));
-			
+				.stream()
+				.forEach(committee -> committee.trainOnInstance(inst));
 		}
 
 		@Override
@@ -1044,19 +956,34 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 	protected class ClassifierWithInfo extends AbstractClassifier {
 		
 		private Classifier classifier;
+		protected Clusterer[] descriptors;
+		protected Random classifierRandom;
+		protected boolean isUndersamplingDescriptors;
+		
 		private int clusterLabel;
 		
-		//For Prequential GMean
 		private double alpha;
-		private double[] estimations;
-		private double[] b;
+		private double estimation;
+		private double b;
 		
-		private int numClasses;
+		protected SamoaToWekaInstanceConverter moaToWekaInstanceConverter;
+		protected WekaToSamoaInstanceConverter wekaToMoaInstanceConverter;
 		
-		protected ClassifierWithInfo(Classifier classifier, double prequentialAccFadingFactor, int numClasses) {
+		Instances originalHeader;
+		Instances nom2BinHeader;
+		
+		protected ClassifierWithInfo(Classifier classifier, Clusterer descriptorType, double prequentialAccFadingFactor, Random classifierRandom, boolean isUndersamplingDescriptors) {
 			this.classifier = classifier;
+			this.descriptors = new Clusterer[2]; // Assuming binary classification task
+			for (int i = 0; i < this.descriptors.length; ++i) {
+				this.descriptors[i] = descriptorType.copy();
+			}
+			this.classifierRandom = classifierRandom;
+			this.isUndersamplingDescriptors = isUndersamplingDescriptors;
 			this.alpha = prequentialAccFadingFactor;
-			this.numClasses = numClasses;
+			
+			this.moaToWekaInstanceConverter = new SamoaToWekaInstanceConverter();
+			this.wekaToMoaInstanceConverter = new WekaToSamoaInstanceConverter();
 			
 			this.resetLearning();
 			
@@ -1067,14 +994,21 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 		 */
 		protected ClassifierWithInfo(ClassifierWithInfo source) {
 			this.classifier = source.classifier.copy();
+			this.descriptors = source.descriptors.clone();
+			this.classifierRandom = source.classifierRandom;
+			this.isUndersamplingDescriptors = source.isUndersamplingDescriptors;
+			
 			this.clusterLabel = source.clusterLabel;
 			
 			this.alpha = source.alpha;
-			this.estimations = source.estimations.clone();
-			this.b = source.b.clone();
+			this.estimation = source.estimation;
+			this.b = source.b;
 			
-			this.numClasses = source.numClasses;
+			this.moaToWekaInstanceConverter = source.moaToWekaInstanceConverter;
+			this.wekaToMoaInstanceConverter = source.wekaToMoaInstanceConverter;
 			
+			this.originalHeader = source.originalHeader;
+			this.nom2BinHeader = source.nom2BinHeader;
 		}
 		
 		public ClassifierWithInfo copy() {
@@ -1108,7 +1042,7 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 			
 			predictions4Clustering.setDataset(predictionErrorByClassifierFromRepo);
 
-			instances.parallelStream()
+			instances.stream()
 					 .forEach(inst -> predictions4Clustering.setValue(instances.indexOf(inst),
 														this.classifier.correctlyClassifies(inst) ? 1.0 : 0.0));			
 			predictions4Clustering.setMissing(predictions4Clustering.classIndex());
@@ -1116,63 +1050,164 @@ public class CDCMS_GMean_OOBUOB_backup extends AbstractClassifier implements Mul
 			return predictions4Clustering;
 		}
 		
-		protected void updatePrequentialGMean(Instance inst) {
-			double weight = inst.weight();
-			
-			if (weight > 0.0) {
-				int trueClass = (int) inst.classValue();
-				
-				this.estimations[trueClass] = this.alpha * this.estimations[trueClass] + (this.classifier.correctlyClassifies(inst) ? weight : 0.0);
-				this.b[trueClass] = this.alpha * this.b[trueClass] + 1.0;
-			}
+		protected void updatePrequentialAccuracy(Instance inst) {
+			this.estimation = this.alpha * this.estimation + (this.classifier.correctlyClassifies(inst) ? 1.0 : 0.0);
+			this.b = this.alpha * this.b + 1.0;
 		}
 		
-		protected double getRecallStatistic(int numClass) {
-			return b[numClass] > 0.0? estimations[numClass] / b[numClass] : 0.0;
+		protected double getPrequentialAccuracy() {
+			return b > 0.0 ? this.estimation / this.b : 0.0;
 		}
 		
-		protected double getPrequentialGMean() {
-			double gmean = 0.0;
-			
-			for (int i = 0; i < this.numClasses; ++i) {
-				if (i == 0) {
-					gmean = this.getRecallStatistic(i);
-				} else {
-					gmean *= this.getRecallStatistic(i);
-				}
-			}
-			gmean = Math.pow(gmean, (1.0/this.numClasses));
-			
-			return gmean;
-		}
-		
-		protected void resetPrequentialGMean() {
-			this.estimations = new double[this.numClasses];
-			this.b = new double[this.numClasses];
-			
-			for(int i = 0; i < this.numClasses; ++i) {
-				this.estimations[i] = 0.0;
-				this.b[i] = 0.0;
-			}   
+		protected void resetPrequentialAccuracy() {
+			this.estimation = 0.0;
+			this.b = 0.0;
 		}
 
 		@Override
 		public boolean isRandomizable() {
-			return false;
+			return true;
 		}
 
 		@Override
 		public void resetLearningImpl() {
 			this.classifier.resetLearning();
-			
+			for (int i = 0; i < this.descriptors.length; ++i) {
+				this.descriptors[i].resetLearning();
+			}
 			this.clusterLabel = -1;
 			
-			this.resetPrequentialGMean();
+			this.resetPrequentialAccuracy();
 		}
 
 		@Override
 		public void trainOnInstanceImpl(Instance inst) {
+			if (this.originalHeader == null) {
+				this.originalHeader = inst.dataset();
+			}
+			
 			this.classifier.trainOnInstance(inst);
+			Instance to_train_descriptor = inst.copy();
+			try {
+				to_train_descriptor = this.nominalToBinary(to_train_descriptor);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+			to_train_descriptor.deleteAttributeAt(to_train_descriptor.classIndex());
+			this.descriptors[(int) inst.classValue()].trainOnInstance(to_train_descriptor);
+		}
+		
+		public List<Instance> getDescriptorsCentre(int classIndex, int targetNumberOfInstances) {
+			Clustering mClusteringResult = this.descriptors[classIndex].getMicroClusteringResult();
+			int numOfmClusters = mClusteringResult.size();
+			AutoExpandVector<Cluster> mClusters = mClusteringResult.getClusteringCopy();
+			
+			/**
+			 * Oversampling:
+			 * Let the ratio = i + f, where i is an integer and f is a float number 0 <= f < 1.0.
+			 * Let the number of descriptor of model C's class[classIndex] be N.
+			 * Then:
+			 * (1) add the whole set of the descriptor for i times. i.e. add N \times i instances.
+			 * (2) add the remaining number of instances: targetNumberOfInstances - (N \times i)
+			 * 
+			 * UnderSampling:
+			 * (3)
+			 * while(targetSet.size() < targetNumberOfInstances) {
+			 * 	targetSet add instance from currentSet with uniform probability.
+			 * }
+			 * 	[which eqauls to (2)]
+			 */
+			List<Instance> currentSet = new ArrayList<Instance>(numOfmClusters);
+			List<Instance> targetSet = new ArrayList<Instance>(targetNumberOfInstances);
+			int k = (int) Math.floor((targetNumberOfInstances * 1d) / (numOfmClusters * 1d));
+
+			// Create currentSet:
+			for (int i = 0; i < numOfmClusters; ++i) {
+				// add class attribute and class value to the array.
+				double[] centreWithClass = new double[mClusters.get(i).getCenter().length+1];
+				System.arraycopy(mClusters.get(i).getCenter(), 0, centreWithClass, 0, mClusters.get(i).getCenter().length);
+				centreWithClass[centreWithClass.length-1] = (double) classIndex;
+				
+				// Create an Instance based on the array; set weight to 1.0;
+				Instance tempInst = new DenseInstance(1d, centreWithClass);
+				tempInst.setDataset(this.nom2BinHeader);
+				try {
+					tempInst = this.binaryToNominal(tempInst, this.originalHeader);
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+				currentSet.add(tempInst);
+			}
+			
+			if (!this.isUndersamplingDescriptors && k >= 1) {
+				// (1):
+				for (int i = 0; i < k; ++i) {
+					targetSet.addAll(currentSet);
+				}
+			}
+			// (2) or (3) :
+			for (int i = 0; targetSet.size() < targetNumberOfInstances; ++i) {
+				boolean isAdd = this.classifierRandom.nextBoolean();
+				if (isAdd) {
+					targetSet.add(currentSet.get(i % currentSet.size()));
+				}
+			}
+			
+			return targetSet;
+		}
+		
+		public int getNumberOfDescriptors(int classIndex) {
+			return this.descriptors[classIndex].getMicroClusteringResult().size();
+		}
+		
+		private Instance binaryToNominal(Instance nom_inst, Instances original_header) throws Exception {
+			
+			Instances bin2nom_insts = new Instances(original_header);
+			Instance tmp_inst = new DenseInstance(original_header.numAttributes());
+			tmp_inst.setDataset(original_header);
+			
+			for (int i = 0; i < bin2nom_insts.numAttributes(); ++i) {
+				String current_attr_name = bin2nom_insts.attribute(i).name();
+				ArrayList<Double> values = new ArrayList<Double>();
+				
+				for (int j = 0; j < nom_inst.numAttributes(); ++j) {
+					if (nom_inst.attribute(j).name().contains(current_attr_name)) {
+						values.add(nom_inst.value(j));
+					}
+				}
+				
+				if (values.size() == 1) { // Numeric attrbute
+					tmp_inst.setValue(i, values.get(0));
+				} else if (values.size() > 1) { // Binary attribute: to be converted to nominal attribute
+					
+					double maxValue = Collections.max(values);
+					int maxIndex = values.indexOf(maxValue);
+					tmp_inst.setValue(i, maxIndex);
+					
+				} else { // matched_attributes.size == 0, which shouldn't happen but just in case.
+					throw new Exception("No matched attribute.");
+				}
+			}
+			bin2nom_insts.add(tmp_inst);
+			
+			return bin2nom_insts.get(0);
+		}
+		
+		private Instance nominalToBinary(Instance original_inst) throws Exception {
+			
+			Instances moaInstances = new Instances(original_inst.dataset());
+			moaInstances.add(original_inst);
+			
+			weka.core.Instances wekaInstances = this.moaToWekaInstanceConverter.wekaInstances(moaInstances);
+			weka.filters.unsupervised.attribute.NominalToBinary nom2BinFilter = new weka.filters.unsupervised.attribute.NominalToBinary();
+			nom2BinFilter.setInputFormat(wekaInstances);
+			wekaInstances = weka.filters.Filter.useFilter(wekaInstances, nom2BinFilter);
+			moaInstances = this.wekaToMoaInstanceConverter.samoaInstances(wekaInstances);
+			if (this.nom2BinHeader == null) {
+				this.nom2BinHeader = moaInstances.get(0).dataset();
+			}
+			
+			return moaInstances.get(0);
 		}
 
 		@Override

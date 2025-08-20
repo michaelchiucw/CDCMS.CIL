@@ -1,7 +1,7 @@
 /*
- *    CDCMS.java
- *    Copyright (C) 2018 University of Birmingham, Birmingham, United Kingdom
- *    @author Chun Wai Chiu (cxc1015@student.bham.ac.uk)
+ *    CDCMS_CIL.java
+ *    Copyright (C) 2025 University of Birmingham, Birmingham, United Kingdom
+ *    @author Chun Wai Chiu (michaelchiucw@gmail.com)
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -55,7 +55,7 @@ import moa.core.Measurement;
 import moa.core.Utils;
 import moa.options.ClassOption;
 
-public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassifier {
+public class CDCMS_GMean_OOBUOB extends AbstractClassifier implements MultiClassClassifier {
 
 	/**
 	 * Default serial version ID
@@ -66,7 +66,10 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
             "Seed for random behaviour of the classifier.", 1);
 	
 	public ClassOption baseLearnerOption = new ClassOption("baseLearner", 'l',
-            "The Base Learner.", Classifier.class, "trees.HoeffdingTree -l NB"); //trees.HoeffdingTree -e 2000000 -g 100 -c 0.01
+            "The Base Learner", Classifier.class, "trees.HoeffdingTree -l NB"); //trees.HoeffdingTree -e 2000000 -g 100 -c 0.01
+	
+	public IntOption numClassesOption = new IntOption("numClasses", 'c',
+			"Number of possible class in the class label", 2, 1, Integer.MAX_VALUE);
 	
 	public IntOption poolSizeOption = new IntOption("ensembleSize", 'k',
 			"The maximum size of the ensemble.", 10, 1, Integer.MAX_VALUE);
@@ -111,6 +114,8 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 	
 	protected double similarityThreshold;
 	
+	protected int numClasses;
+	
 	protected EnsembleWithInfo ensemble_NL;
 	
 	protected EnsembleWithInfo ensemble_NH;
@@ -140,7 +145,7 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 	
 	protected SamoaToWekaInstanceConverter instanceConverter;
 	
-	public CDCMS_OOBUOB() {
+	public CDCMS_GMean_OOBUOB() {
 		this.clustererClasses = findWekaClustererClasses();
         String[] optionLabels = new String[clustererClasses.length];
         String[] optionDescriptions = new String[clustererClasses.length];
@@ -175,16 +180,18 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		// *-1, because more negative means more diverse in QStatistics.
 		this.similarityThreshold = this.similarityThresholdOption.getValue() * -1;
 		
+		this.numClasses = this.numClassesOption.getValue();
+		
 		this.driftDetector = ((ChangeDetector) getPreparedClassOption(this.driftDetectorOption)).copy();
 		
 		this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
 				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
-				this.classifierRandom, this.isUndersamplingDescriptors);
+				this.classifierRandom, this.isUndersamplingDescriptors, this.numClasses);
 		
-		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
 		this.ensemble_NL.add(new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
 				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
-				this.classifierRandom, this.isUndersamplingDescriptors));
+				this.classifierRandom, this.isUndersamplingDescriptors, this.numClasses));
 		
 		this.ensemble_OL = null;
 		this.ensemble_NH = null;
@@ -238,29 +245,29 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 	//TODO: For debugging:
 	private void showPrequentialAccuracy() {
 		
-		double accuracySum = this.ensemble_NL.getPrequentialAccuracy() +
-				(this.ensemble_NH == null ? 0.0 : this.ensemble_NH.getPrequentialAccuracy()) +
-				(this.ensemble_OL == null ? 0.0 :this.ensemble_OL.getPrequentialAccuracy());
+		double gmeanSum = this.ensemble_NL.getPrequentialGMean() +
+				(this.ensemble_NH == null ? 0.0 : this.ensemble_NH.getPrequentialGMean()) +
+				(this.ensemble_OL == null ? 0.0 :this.ensemble_OL.getPrequentialGMean());
 			
 		System.out.println("proceed Instances: " + super.trainingWeightSeenByModel);
 		
 		if (this.ensemble_OL != null) {
-			System.out.println("OL | Prequential Accuracy: " + this.ensemble_OL.getPrequentialAccuracy() + " | size: " + this.ensemble_OL.size() +
-								" | weight: " + (this.ensemble_OL.getPrequentialAccuracy() / accuracySum));
+			System.out.println("OL | Prequential Accuracy: " + this.ensemble_OL.getPrequentialGMean() + " | size: " + this.ensemble_OL.size() +
+								" | weight: " + (this.ensemble_OL.getPrequentialGMean() / gmeanSum));
 		} else {
 			System.out.println("OL | NULL");
 		}
 		
 		if (this.ensemble_NH != null) {
-			System.out.println("NH | Prequential Accuracy: " + this.ensemble_NH.getPrequentialAccuracy() + " | size: " + this.ensemble_NH.size() +
-								" | weight: " + (this.ensemble_NH.getPrequentialAccuracy() / accuracySum));
+			System.out.println("NH | Prequential Accuracy: " + this.ensemble_NH.getPrequentialGMean() + " | size: " + this.ensemble_NH.size() +
+								" | weight: " + (this.ensemble_NH.getPrequentialGMean() / gmeanSum));
 		} else {
 			System.out.println("NH | NULL");
 		}
 			
 		if (this.ensemble_NL != null) {
-			System.out.println("NL | Prequential Accuracy: " + this.ensemble_NL.getPrequentialAccuracy() + " | size: " + this.ensemble_NL.size() +
-								" | weight: " + (this.ensemble_NL.getPrequentialAccuracy() / accuracySum));
+			System.out.println("NL | Prequential Accuracy: " + this.ensemble_NL.getPrequentialGMean() + " | size: " + this.ensemble_NL.size() +
+								" | weight: " + (this.ensemble_NL.getPrequentialGMean() / gmeanSum));
 		} else {
 			System.out.println("NL | NULL");
 		}
@@ -271,11 +278,11 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		
 		double[] to_return = null;
 		
-		double accuracy_NL = this.ensemble_NL.getPrequentialAccuracy();
-		double accuracy_OL = this.ensemble_OL == null ? 0.0 : this.ensemble_OL.getPrequentialAccuracy();
-		double accuracy_NH = this.ensemble_NH == null ? 0.0 : this.ensemble_NH.getPrequentialAccuracy();
+		double gmean_NL = this.ensemble_NL.getPrequentialGMean();
+		double gmean_OL = this.ensemble_OL == null ? 0.0 : this.ensemble_OL.getPrequentialGMean();
+		double gmean_NH = this.ensemble_NH == null ? 0.0 : this.ensemble_NH.getPrequentialGMean();
 		
-		double accuracySum = accuracy_OL + accuracy_NH + accuracy_NL;
+		double gmeanSum = gmean_OL + gmean_NH + gmean_NL;
 		
 		DoubleVector combinedVote = new DoubleVector();
 		
@@ -288,31 +295,31 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		switch (this.drift_level) {
 			case NORMAL:
 				if (this.ensemble_OL != null && this.ensemble_NH != null &&
-						accuracy_NL < accuracy_OL && accuracy_NL < accuracy_NH) {
+						gmean_NL < gmean_OL && gmean_NL < gmean_NH) {
 					
-					if (this.ensemble_OL.estimation > 0.0) {
+					if (gmean_OL > 0.0) {
 						DoubleVector vote = new DoubleVector(this.ensemble_OL.getVotesForInstance(inst));
 						if (vote.sumOfValues() > 0.0) {
 							vote.normalize();
-							vote.scaleValues(accuracy_OL / accuracySum);
+							vote.scaleValues(gmean_OL / gmeanSum);
 							combinedVote.addValues(vote);
 //							a = true;
 						}
 					}
-					if (this.ensemble_NH.estimation > 0.0) {
+					if (gmean_NH > 0.0) {
 						DoubleVector vote = new DoubleVector(this.ensemble_NH.getVotesForInstance(inst));
 						if (vote.sumOfValues() > 0.0) {
 							vote.normalize();
-							vote.scaleValues(accuracy_NH / accuracySum);
+							vote.scaleValues(gmean_NH / gmeanSum);
 							combinedVote.addValues(vote);
 //							b = true;
 						}
 					}
-					if (this.ensemble_NL.estimation > 0.0) {
+					if (gmean_NL > 0.0) {
 						DoubleVector vote = new DoubleVector(this.ensemble_NL.getVotesForInstance(inst));
 						if (vote.sumOfValues() > 0.0) {
 							vote.normalize();
-							vote.scaleValues(accuracy_NL / accuracySum);
+							vote.scaleValues(gmean_NL / gmeanSum);
 							combinedVote.addValues(vote);
 //							c = true;
 						}
@@ -332,29 +339,29 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 				break;
 			case OUTCONTROL:
 				
-				if (this.ensemble_OL.estimation > 0.0) {
+				if (gmean_OL > 0.0) {
 					DoubleVector vote = new DoubleVector(this.ensemble_OL.getVotesForInstance(inst));
 					if (vote.sumOfValues() > 0.0) {
 						vote.normalize();
-						vote.scaleValues(accuracy_OL / accuracySum);
+						vote.scaleValues(gmean_OL / gmeanSum);
 						combinedVote.addValues(vote);
 //						a = true;
 					}
 				}
-				if (this.ensemble_NH.estimation > 0.0) {
+				if (gmean_NH > 0.0) {
 					DoubleVector vote = new DoubleVector(this.ensemble_NH.getVotesForInstance(inst));
 					if (vote.sumOfValues() > 0.0) {
 						vote.normalize();
-						vote.scaleValues(accuracy_NH / accuracySum);
+						vote.scaleValues(gmean_NH / gmeanSum);
 						combinedVote.addValues(vote);
 //						b = true;
 					}
 				}
-				if (this.ensemble_NL.estimation > 0.0) {
+				if (gmean_NL > 0.0) {
 					DoubleVector vote = new DoubleVector(this.ensemble_NL.getVotesForInstance(inst));
 					if (vote.sumOfValues() > 0.0) {
 						vote.normalize();
-						vote.scaleValues(accuracy_NL / accuracySum);
+						vote.scaleValues(gmean_NL / gmeanSum);
 						combinedVote.addValues(vote);
 //						c = true;
 					}
@@ -600,7 +607,7 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		 							worstInNL.trainingWeightSeenByModel() > this.repository.get(mostSimilarIndex).trainingWeightSeenByModel()) {
 		 						
 		 						this.repository.remove(mostSimilarIndex);
-								worstInNL.resetPrequentialAccuracy();
+								worstInNL.resetPrequentialGMean();
 								this.repository.add(worstInNL);
 								
 							} else {
@@ -610,7 +617,7 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 							}
 
 						} else {
-							worstInNL.resetPrequentialAccuracy();
+							worstInNL.resetPrequentialGMean();
 							this.repository.add(worstInNL);
 						}
 						
@@ -622,10 +629,10 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 					
 					this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
 							((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
-							this.classifierRandom, this.isUndersamplingDescriptors);
+							this.classifierRandom, this.isUndersamplingDescriptors, this.numClasses);
 					
 				} else {
-					this.candidate.updatePrequentialAccuracy(inst);
+					this.candidate.updatePrequentialGMean(inst);
 					this.candidate.trainOnInstance(inst);
 				}
 				
@@ -666,14 +673,14 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 				for (int i = 0; i < isAdd.length; ++i) {
 					if (isAdd[i]) {
 						ClassifierWithInfo toAdd = this.ensemble_NL.getActualEnsemble().get(i).copy();
-						toAdd.resetPrequentialAccuracy();
+						toAdd.resetPrequentialGMean();
 						this.repository.add(toAdd);
 					}
 				}
 				
 				this.ensemble_NL.clear();
 				
-				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), false, "NH");
+				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, this.thetaOption.getValue(), this.isUOBOption.isSet(), false, "NH");
 				
 				if (this.previous_drift_level == DRIFT_LEVEL.NORMAL && this.repository.size() > 1) {
 					this.candidate.resetLearning();
@@ -735,16 +742,16 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 					this.resetClusterer();
 				}
 				
-				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.numClasses, this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
 				this.ensemble_NL.add(candidate);
 				
 				this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
 						((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
-						this.classifierRandom, this.isUndersamplingDescriptors);
+						this.classifierRandom, this.isUndersamplingDescriptors, this.numClasses);
 				
-				this.ensemble_NH.resetPrequentialAccuracy();
-				this.ensemble_NL.resetPrequentialAccuracy();
-				this.ensemble_OL.resetPrequentialAccuracy();
+				this.ensemble_NH.resetPrequentialGMean();
+				this.ensemble_NL.resetPrequentialGMean();
+				this.ensemble_OL.resetPrequentialGMean();
 				
 				this.afterDriftInstCount = 0;
 				
@@ -760,12 +767,12 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		}
 		
 		if (this.ensemble_OL != null) {
-			this.ensemble_OL.updatePrequentialAccuracy(inst);
+			this.ensemble_OL.updatePrequentialGMean(inst);
 		}
 		if (this.ensemble_NH != null) {
-			this.ensemble_NH.updatePrequentialAccuracy(inst);
+			this.ensemble_NH.updatePrequentialGMean(inst);
 		}
-		this.ensemble_NL.updatePrequentialAccuracy(inst);
+		this.ensemble_NL.updatePrequentialGMean(inst);
 		this.ensemble_NL.trainOnInstance(inst);
 	}
 
@@ -798,37 +805,39 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		private List<ClassifierWithInfo> ensemble;
 		
 		private double alpha;
-		private double estimation;
-		private double b;
+		private double[] estimations;
+		private double[] b;
 		
 		private boolean isWMEnsemble;
 		
 		private double[] classSizeEstimation;
 		private double[] classSizeb;
-
+		
 		private double theta;
 		
 		private boolean isUOB;
 		
-		protected EnsembleWithInfo(double alpha, double theta, boolean isUOB, boolean isWMEnsemble, String name) {
+		private int numClasses;
+		
+		protected EnsembleWithInfo(double alpha, int numClasses, double theta, boolean isUOB, boolean isWMEnsemble, String name) {
 			
 			this.name = name;
 			
 			this.ensemble = new ArrayList<ClassifierWithInfo>();
 			
 			this.alpha = alpha;
-			this.estimation = 0.0;
-			this.b = 0.0;
+			this.numClasses = numClasses;		
 			
 			this.classSizeEstimation = null;
 			this.classSizeb = null;
-
+			
 			this.theta = theta;
 			
 			this.isUOB = isUOB;
 			
 			this.isWMEnsemble = isWMEnsemble;
 			
+			this.resetPrequentialGMean();
 		}
 		
 		/*
@@ -843,10 +852,11 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 			this.ensemble = new ArrayList<ClassifierWithInfo>(source.ensemble);
 			
 			this.alpha = source.alpha;
-			this.estimation = source.estimation;
-			this.b = source.b;
+			this.numClasses = source.numClasses;
+			this.estimations = source.estimations.clone();
+			this.b = source.b.clone();
 			
-			this.classSizeEstimation = source.classSizeEstimation.clone();
+			this.classSizeEstimation = source.classSizeEstimation.clone();;
 			this.classSizeb = source.classSizeb.clone();
 			
 			this.theta = source.theta;
@@ -872,8 +882,10 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		
 		protected void clear() {
 			this.ensemble.clear();
-			this.estimation = 0.0;
-			this.b = 0.0;
+			for (int i = 0; i < numClasses; ++i) {
+				this.estimations[i] = 0.0;
+				this.b[i] = 0.0;
+			}
 		}
 		
 		protected void add(ClassifierWithInfo toAdd) {
@@ -883,7 +895,7 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		protected ClassifierWithInfo removeWorst() {
 			ClassifierWithInfo worst = this.ensemble
 										   .stream()
-										   .min(Comparator.comparingDouble(x -> x.getPrequentialAccuracy()))
+										   .min(Comparator.comparingDouble(x -> x.getPrequentialGMean()))
 										   .get();
 			
 //			for(int i = 0; i < this.ensemble.size(); ++i) {
@@ -898,20 +910,20 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		
 		public double[] getVotesForInstance(Instance inst) {
 			
-			double accuracySum = this.ensemble
+			double gmeanSum = this.ensemble
 									 .stream()
-									 .mapToDouble(ClassifierWithInfo::getPrequentialAccuracy)
+									 .mapToDouble(ClassifierWithInfo::getPrequentialGMean)
 									 .sum();
 			
 			DoubleVector combinedVote = new DoubleVector();
 			for (int i = 0; i < ensemble.size(); ++i) {
-				if (ensemble.get(i).estimation > 0.0) {
+				if (ensemble.get(i).getPrequentialGMean() > 0.0) {
 					DoubleVector vote = new DoubleVector(ensemble.get(i).getVotesForInstance(inst));
 						
 					if (vote.sumOfValues() > 0.0) {
 						vote.normalize();
 						if (isWMEnsemble) {
-							vote.scaleValues(ensemble.get(i).getPrequentialAccuracy() / accuracySum);
+							vote.scaleValues(ensemble.get(i).getPrequentialGMean() / gmeanSum);
 						}
 						combinedVote.addValues(vote);
 					}
@@ -990,28 +1002,54 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		
 		//----------------------------------------------------------------------
 		
-		protected void updatePrequentialAccuracy(Instance inst) {
-			this.estimation = this.alpha * this.estimation +
-							(Utils.maxIndex(this.getVotesForInstance(inst)) == (int) inst.classValue() ? 1.0 : 0.0);
+		protected void updatePrequentialGMean(Instance inst) {
+			double weight = inst.weight();
+			int trueClass = (int) inst.classValue();
 			
-			this.b = this.alpha * this.b + 1.0;
-
-			this.ensemble
-				.stream()
-				.forEach(committee -> committee.updatePrequentialAccuracy(inst));
+			if (weight > 0.0) {
+				int predictedClass = Utils.maxIndex(this.getVotesForInstance(inst));
+				this.estimations[trueClass] = this.alpha * this.estimations[trueClass] + (predictedClass == trueClass ? weight : 0.0);
+				this.b[trueClass] = this.alpha * this.b[trueClass] + 1.0;
+				
+				this.ensemble
+					.stream()
+					.forEach(committee -> committee.updatePrequentialGMean(inst));
+			}
 		}
 		
-		protected double getPrequentialAccuracy() {
-			return b > 0.0 ? this.estimation / this.b : 0.0;
+		protected double getRecallStatistic(int numClass) {
+			return b[numClass] > 0.0? estimations[numClass] / b[numClass] : 0.0;
 		}
 		
-		protected void resetPrequentialAccuracy() {
-			this.estimation = 0.0;
-			this.b = 0.0;
+		protected double getPrequentialGMean() {
+			double gmean = 0.0;
 			
-			this.ensemble
-				.stream()
-				.forEach(committee -> committee.resetPrequentialAccuracy());
+			for (int i = 0; i < this.numClasses; ++i) {
+				if (i == 0) {
+					gmean = this.getRecallStatistic(i);
+				} else {
+					gmean *= this.getRecallStatistic(i);
+				}
+			}
+			gmean = Math.pow(gmean, (1.0/this.numClasses));
+			
+			return gmean;
+		}
+		
+		protected void resetPrequentialGMean() {
+			this.estimations = new double[this.numClasses];
+			this.b = new double[this.numClasses];
+			
+			for (int i = 0; i < numClasses; ++i) {
+				this.estimations[i] = 0.0;
+				this.b[i] = 0.0;
+			}
+			
+			if (this.ensemble.size() > 0) {
+				this.ensemble
+					.stream()
+					.forEach(committee -> committee.resetPrequentialGMean());
+			}
 		}
 
 		@Override
@@ -1023,6 +1061,9 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		public void resetLearningImpl() {
 			
 		}
+		
+		double count0 = 0;
+		double count1 = 0;
 
 		@Override
 		public void trainOnInstanceImpl(Instance inst) {
@@ -1059,9 +1100,12 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		
 		private int clusterLabel;
 		
+		//For Prequential GMean
 		private double alpha;
-		private double estimation;
-		private double b;
+		private double[] estimations;
+		private double[] b;
+		
+		private int numClasses;
 		
 		protected SamoaToWekaInstanceConverter moaToWekaInstanceConverter;
 		protected WekaToSamoaInstanceConverter wekaToMoaInstanceConverter;
@@ -1069,7 +1113,7 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 		Instances originalHeader;
 		Instances nom2BinHeader;
 		
-		protected ClassifierWithInfo(Classifier classifier, Clusterer descriptorType, double prequentialAccFadingFactor, Random classifierRandom, boolean isUndersamplingDescriptors) {
+		protected ClassifierWithInfo(Classifier classifier, Clusterer descriptorType, double prequentialAccFadingFactor, Random classifierRandom, boolean isUndersamplingDescriptors, int numClasses) {
 			this.classifier = classifier;
 			this.descriptors = new Clusterer[2]; // Assuming binary classification task
 			for (int i = 0; i < this.descriptors.length; ++i) {
@@ -1078,6 +1122,7 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 			this.classifierRandom = classifierRandom;
 			this.isUndersamplingDescriptors = isUndersamplingDescriptors;
 			this.alpha = prequentialAccFadingFactor;
+			this.numClasses = numClasses;
 			
 			this.moaToWekaInstanceConverter = new SamoaToWekaInstanceConverter();
 			this.wekaToMoaInstanceConverter = new WekaToSamoaInstanceConverter();
@@ -1098,8 +1143,10 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 			this.clusterLabel = source.clusterLabel;
 			
 			this.alpha = source.alpha;
-			this.estimation = source.estimation;
-			this.b = source.b;
+			this.estimations = source.estimations.clone();
+			this.b = source.b.clone();
+			
+			this.numClasses = source.numClasses;
 			
 			this.moaToWekaInstanceConverter = source.moaToWekaInstanceConverter;
 			this.wekaToMoaInstanceConverter = source.wekaToMoaInstanceConverter;
@@ -1147,23 +1194,49 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 			return predictions4Clustering;
 		}
 		
-		protected void updatePrequentialAccuracy(Instance inst) {
-			this.estimation = this.alpha * this.estimation + (this.classifier.correctlyClassifies(inst) ? 1.0 : 0.0);
-			this.b = this.alpha * this.b + 1.0;
+		protected void updatePrequentialGMean(Instance inst) {
+			double weight = inst.weight();
+			
+			if (weight > 0.0) {
+				int trueClass = (int) inst.classValue();
+				
+				this.estimations[trueClass] = this.alpha * this.estimations[trueClass] + (this.classifier.correctlyClassifies(inst) ? weight : 0.0);
+				this.b[trueClass] = this.alpha * this.b[trueClass] + 1.0;
+			}
 		}
 		
-		protected double getPrequentialAccuracy() {
-			return b > 0.0 ? this.estimation / this.b : 0.0;
+		protected double getRecallStatistic(int numClass) {
+			return b[numClass] > 0.0? estimations[numClass] / b[numClass] : 0.0;
 		}
 		
-		protected void resetPrequentialAccuracy() {
-			this.estimation = 0.0;
-			this.b = 0.0;
+		protected double getPrequentialGMean() {
+			double gmean = 0.0;
+			
+			for (int i = 0; i < this.numClasses; ++i) {
+				if (i == 0) {
+					gmean = this.getRecallStatistic(i);
+				} else {
+					gmean *= this.getRecallStatistic(i);
+				}
+			}
+			gmean = Math.pow(gmean, (1.0/this.numClasses));
+			
+			return gmean;
+		}
+		
+		protected void resetPrequentialGMean() {
+			this.estimations = new double[this.numClasses];
+			this.b = new double[this.numClasses];
+			
+			for(int i = 0; i < this.numClasses; ++i) {
+				this.estimations[i] = 0.0;
+				this.b[i] = 0.0;
+			}   
 		}
 
 		@Override
 		public boolean isRandomizable() {
-			return true;
+			return false;
 		}
 
 		@Override
@@ -1174,7 +1247,7 @@ public class CDCMS_OOBUOB extends AbstractClassifier implements MultiClassClassi
 			}
 			this.clusterLabel = -1;
 			
-			this.resetPrequentialAccuracy();
+			this.resetPrequentialGMean();
 		}
 
 		@Override

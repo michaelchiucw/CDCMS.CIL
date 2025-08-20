@@ -1,7 +1,7 @@
 /*
- *    CDCMS.java
- *    Copyright (C) 2018 University of Birmingham, Birmingham, United Kingdom
- *    @author Chun Wai Chiu (cxc1015@student.bham.ac.uk)
+ *    CDCMS_CIL_OOBUOB.java
+ *    Copyright (C) 2025 University of Birmingham, Birmingham, United Kingdom
+ *    @author Chun Wai Chiu (michaelchiucw@gmail.com)
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -55,7 +55,7 @@ import moa.core.Measurement;
 import moa.core.Utils;
 import moa.options.ClassOption;
 
-public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
+public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassClassifier {
 
 	/**
 	 * Default serial version ID
@@ -80,6 +80,9 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 	public FloatOption fadingFactorOption = new FloatOption("fadingFactor", 'f',
 			"Fading Factor for prequential accuracy calculation on test chunk", 0.999, 0, 1);
 	
+	public FloatOption thetaOption = new FloatOption("theta", 't',
+            "The time decay factor for class size.", 0.99, 0, 1);
+	
 	public ClassOption descriptorsManagerOption = new ClassOption("descriptorsManager", 'm',
 			"Clustering method to use as descriptors manager.", Clusterer.class, "clustream.Clustream");
 	
@@ -90,6 +93,8 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 	
 	public ClassOption driftDetectorOption = new ClassOption("driftDetector", 'd',
             "Drift detection method to use.", ChangeDetector.class, "ADWINChangeDetector");
+	
+	public FlagOption isUOBOption = new FlagOption("isUOB", 'u', "isUOB?");
 	
 //	public ClassOption clustererOption = new ClassOption("clusterer", 'w',
 //			"Clusterer for clustering models in repository.", Clusterer.class,
@@ -135,7 +140,7 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 	
 	protected SamoaToWekaInstanceConverter instanceConverter;
 	
-	public CDCMS() {
+	public CDCMS_CIL_OOBUOB() {
 		this.clustererClasses = findWekaClustererClasses();
         String[] optionLabels = new String[clustererClasses.length];
         String[] optionDescriptions = new String[clustererClasses.length];
@@ -176,7 +181,7 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
 				this.classifierRandom, this.isUndersamplingDescriptors);
 		
-		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), true, "NL");
+		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
 		this.ensemble_NL.add(new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
 				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
 				this.classifierRandom, this.isUndersamplingDescriptors));
@@ -668,7 +673,7 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 				
 				this.ensemble_NL.clear();
 				
-				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), false, "NH");
+				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), false, "NH");
 				
 				if (this.previous_drift_level == DRIFT_LEVEL.NORMAL && this.repository.size() > 1) {
 					this.candidate.resetLearning();
@@ -730,7 +735,7 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 					this.resetClusterer();
 				}
 				
-				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), true, "NL");
+				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
 				this.ensemble_NL.add(candidate);
 				
 				this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
@@ -798,15 +803,29 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 		
 		private boolean isWMEnsemble;
 		
-		protected EnsembleWithInfo(double prequentialAccFadingFactor, boolean isWMEnsemble, String name) {
+		private double[] classSizeEstimation;
+		private double[] classSizeb;
+
+		private double theta;
+		
+		private boolean isUOB;
+		
+		protected EnsembleWithInfo(double alpha, double theta, boolean isUOB, boolean isWMEnsemble, String name) {
 			
 			this.name = name;
 			
 			this.ensemble = new ArrayList<ClassifierWithInfo>();
 			
-			this.alpha = prequentialAccFadingFactor;
+			this.alpha = alpha;
 			this.estimation = 0.0;
 			this.b = 0.0;
+			
+			this.classSizeEstimation = null;
+			this.classSizeb = null;
+
+			this.theta = theta;
+			
+			this.isUOB = isUOB;
 			
 			this.isWMEnsemble = isWMEnsemble;
 			
@@ -826,6 +845,13 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 			this.alpha = source.alpha;
 			this.estimation = source.estimation;
 			this.b = source.b;
+			
+			this.classSizeEstimation = source.classSizeEstimation.clone();
+			this.classSizeb = source.classSizeb.clone();
+			
+			this.theta = source.theta;
+			
+			this.isUOB = source.isUOB;
 			
 			this.isWMEnsemble = source.isWMEnsemble;
 			
@@ -900,6 +926,70 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 			
 		}
 		
+		//-------------------------------OOB/UOB methods----------------------------
+		
+		protected void updateClassSize(Instance inst) {
+			if (this.classSizeEstimation == null) {
+				classSizeEstimation = new double[inst.numClasses()];
+
+				// <---start class size as equal for all classes
+				for (int i=0; i<classSizeEstimation.length; ++i) {
+					classSizeEstimation[i] = 1d/classSizeEstimation.length;
+				}
+			}
+			if (this.classSizeb == null) {
+				classSizeb = new double[inst.numClasses()];
+				
+				for (int i=0; i<classSizeEstimation.length; ++i) {
+					classSizeb[i] = 1d/classSizeb.length;
+				}
+			}
+			
+			for (int i=0; i<classSizeEstimation.length; ++i) {
+				classSizeEstimation[i] = thetaOption.getValue() * classSizeEstimation[i] + ((int) inst.classValue() == i ? 1d:0d);
+				classSizeb[i] = thetaOption.getValue() * classSizeb[i] + 1d;
+			}
+		}
+		
+		protected double getClassSize(int classIndex) {
+			return classSizeb[classIndex] > 0.0 ? classSizeEstimation[classIndex] / classSizeb[classIndex] : 0.0;
+		}
+		
+		public double calculateWeightBaseOnClassSize(Instance inst) {
+			double weight = 1d;
+			int targetClass = this.isUOB ? getMinorityClass() : getMajorityClass();
+			
+			weight = this.getClassSize(targetClass) / this.getClassSize((int) inst.classValue());
+
+			return weight;
+		}
+
+		// will result in an error if classSize is not initialised yet
+		public int getMajorityClass() {
+			int indexMaj = 0;
+
+			for (int i=1; i<classSizeEstimation.length; ++i) {
+				if (this.getClassSize(i) > this.getClassSize(indexMaj)) {
+					indexMaj = i;
+				}
+			}
+			return indexMaj;
+		}
+		
+		// will result in an error if classSize is not initialised yet
+		public int getMinorityClass() {
+			int indexMin = 0;
+
+			for (int i=1; i<classSizeEstimation.length; ++i) {
+				if (this.getClassSize(i) <= this.getClassSize(indexMin)) {
+					indexMin = i;
+				}
+			}
+			return indexMin;
+		}
+		
+		//----------------------------------------------------------------------
+		
 		protected void updatePrequentialAccuracy(Instance inst) {
 			this.estimation = this.alpha * this.estimation +
 							(Utils.maxIndex(this.getVotesForInstance(inst)) == (int) inst.classValue() ? 1.0 : 0.0);
@@ -936,9 +1026,16 @@ public class CDCMS extends AbstractClassifier implements MultiClassClassifier {
 
 		@Override
 		public void trainOnInstanceImpl(Instance inst) {
+			this.updateClassSize(inst);
+			double weight = this.calculateWeightBaseOnClassSize(inst);
+			
+			Instance weightedInst = (Instance) inst.copy();
+			weightedInst.setWeight(inst.weight() * weight);
+			
 			this.ensemble
 				.stream()
-				.forEach(committee -> committee.trainOnInstance(inst));
+				.forEach(committee -> committee.trainOnInstance(weightedInst));
+			
 		}
 
 		@Override
