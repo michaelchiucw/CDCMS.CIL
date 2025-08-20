@@ -1,5 +1,5 @@
 /*
- *    CDCMS_tnnls2020_OOBUOB.java
+ *    CDCMS_tnnls2020_OSUS.java
  *    Copyright (C) 2025 University of Birmingham, Birmingham, United Kingdom
  *    @author Chun Wai Chiu (michaelchiucw@gmail.com)
  *
@@ -46,7 +46,7 @@ import moa.core.Measurement;
 import moa.core.Utils;
 import moa.options.ClassOption;
 
-public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiClassClassifier {
+public class CDCMS_tnnls2020_OSUS extends AbstractClassifier implements MultiClassClassifier {
 
 	/**
 	 * Default serial version ID
@@ -79,7 +79,7 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
             "Drift detection method to use.", ChangeDetector.class, "ADWINChangeDetector");
 	
 	// Added for OB / UB
-	public FlagOption isUOBOption = new FlagOption("isUOB", 'u', "isUOB?");
+	public FlagOption isUSOption = new FlagOption("isUS", 'u', "isUS?");
 	
 	public MultiChoiceOption wekaAlgorithmOption;
 
@@ -119,7 +119,7 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
 	
 	protected SamoaToWekaInstanceConverter instanceConverter;
 	
-	public CDCMS_tnnls2020_OOBUOB() {
+	public CDCMS_tnnls2020_OSUS() {
 		this.clustererClasses = findWekaClustererClasses();
         String[] optionLabels = new String[clustererClasses.length];
         String[] optionDescriptions = new String[clustererClasses.length];
@@ -155,7 +155,7 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
 		this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
 												this.fadingFactorOption.getValue());
 		
-		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUSOption.isSet(), true, "NL");
 		this.ensemble_NL.add(new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
 													this.fadingFactorOption.getValue()));
 		
@@ -493,7 +493,7 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
 				
 				this.ensemble_NL.clear();
 				
-				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), false, "NH");
+				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUSOption.isSet(), false, "NH");
 				
 				if (this.previous_drift_level == DRIFT_LEVEL.NORMAL && this.repository.size() > 1) {
 					this.candidate.resetLearning();
@@ -544,7 +544,7 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
 					this.resetClusterer();
 				}
 				
-				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUSOption.isSet(), true, "NL");
 				this.ensemble_NL.add(candidate);
 				
 				this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
@@ -624,9 +624,9 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
 
 		private double theta;
 		
-		private boolean isUOB;
+		private boolean isUS;
 		
-		protected EnsembleWithInfo(double prequentialAccFadingFactor, double theta, boolean isUOB, boolean isWMEnsemble, String name) {
+		protected EnsembleWithInfo(double prequentialAccFadingFactor, double theta, boolean isUS, boolean isWMEnsemble, String name) {
 				
 			this.name = name;
 			
@@ -641,7 +641,7 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
 
 			this.theta = theta;
 			
-			this.isUOB = isUOB;
+			this.isUS = isUS;
 			
 			this.isWMEnsemble = isWMEnsemble;
 			
@@ -667,7 +667,7 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
 			
 			this.theta = source.theta;
 			
-			this.isUOB = source.isUOB;
+			this.isUS = source.isUS;
 			
 			this.isWMEnsemble = source.isWMEnsemble;
 			
@@ -732,7 +732,7 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
 			
 		}
 		
-		//-------------------------------OOB/UOB methods----------------------------
+		//-------------------------------OS/US methods----------------------------
 		
 		protected void updateClassSize(Instance inst) {
 			if (this.classSizeEstimation == null) {
@@ -763,7 +763,7 @@ public class CDCMS_tnnls2020_OOBUOB extends AbstractClassifier implements MultiC
 		
 		public double calculateWeightBaseOnClassSize(Instance inst) {
 			double weight = 1d;
-			int targetClass = this.isUOB ? getMinorityClass() : getMajorityClass();
+			int targetClass = this.isUS ? getMinorityClass() : getMajorityClass();
 			
 			weight = this.getClassSize(targetClass) / this.getClassSize((int) inst.classValue());
 

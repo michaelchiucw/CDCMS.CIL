@@ -1,5 +1,5 @@
 /*
- *    CDCMS_CIL_OOBUOB.java
+ *    CDCMS_CIL_OSUS.java
  *    Copyright (C) 2025 University of Birmingham, Birmingham, United Kingdom
  *    @author Chun Wai Chiu (michaelchiucw@gmail.com)
  *
@@ -55,7 +55,7 @@ import moa.core.Measurement;
 import moa.core.Utils;
 import moa.options.ClassOption;
 
-public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassClassifier {
+public class CDCMS_CIL_OSUS extends AbstractClassifier implements MultiClassClassifier {
 
 	/**
 	 * Default serial version ID
@@ -94,7 +94,7 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 	public ClassOption driftDetectorOption = new ClassOption("driftDetector", 'd',
             "Drift detection method to use.", ChangeDetector.class, "ADWINChangeDetector");
 	
-	public FlagOption isUOBOption = new FlagOption("isUOB", 'u', "isUOB?");
+	public FlagOption isUSOption = new FlagOption("isUS", 'u', "isUS?");
 	
 //	public ClassOption clustererOption = new ClassOption("clusterer", 'w',
 //			"Clusterer for clustering models in repository.", Clusterer.class,
@@ -140,7 +140,7 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 	
 	protected SamoaToWekaInstanceConverter instanceConverter;
 	
-	public CDCMS_CIL_OOBUOB() {
+	public CDCMS_CIL_OSUS() {
 		this.clustererClasses = findWekaClustererClasses();
         String[] optionLabels = new String[clustererClasses.length];
         String[] optionDescriptions = new String[clustererClasses.length];
@@ -181,7 +181,7 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
 				this.classifierRandom, this.isUndersamplingDescriptors);
 		
-		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+		this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUSOption.isSet(), true, "NL");
 		this.ensemble_NL.add(new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
 				((Clusterer) getPreparedClassOption(this.descriptorsManagerOption)).copy(), this.fadingFactorOption.getValue(),
 				this.classifierRandom, this.isUndersamplingDescriptors));
@@ -673,7 +673,7 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 				
 				this.ensemble_NL.clear();
 				
-				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), false, "NH");
+				this.ensemble_NH = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUSOption.isSet(), false, "NH");
 				
 				if (this.previous_drift_level == DRIFT_LEVEL.NORMAL && this.repository.size() > 1) {
 					this.candidate.resetLearning();
@@ -735,7 +735,7 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 					this.resetClusterer();
 				}
 				
-				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUOBOption.isSet(), true, "NL");
+				this.ensemble_NL = new EnsembleWithInfo(this.fadingFactorOption.getValue(), this.thetaOption.getValue(), this.isUSOption.isSet(), true, "NL");
 				this.ensemble_NL.add(candidate);
 				
 				this.candidate = new ClassifierWithInfo(((Classifier) this.getPreparedClassOption(this.baseLearnerOption)).copy(),
@@ -808,9 +808,9 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 
 		private double theta;
 		
-		private boolean isUOB;
+		private boolean isUS;
 		
-		protected EnsembleWithInfo(double alpha, double theta, boolean isUOB, boolean isWMEnsemble, String name) {
+		protected EnsembleWithInfo(double alpha, double theta, boolean isUS, boolean isWMEnsemble, String name) {
 			
 			this.name = name;
 			
@@ -825,7 +825,7 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 
 			this.theta = theta;
 			
-			this.isUOB = isUOB;
+			this.isUS = isUS;
 			
 			this.isWMEnsemble = isWMEnsemble;
 			
@@ -851,7 +851,7 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 			
 			this.theta = source.theta;
 			
-			this.isUOB = source.isUOB;
+			this.isUS = source.isUS;
 			
 			this.isWMEnsemble = source.isWMEnsemble;
 			
@@ -926,7 +926,7 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 			
 		}
 		
-		//-------------------------------OOB/UOB methods----------------------------
+		//-------------------------------OS/US methods----------------------------
 		
 		protected void updateClassSize(Instance inst) {
 			if (this.classSizeEstimation == null) {
@@ -957,7 +957,7 @@ public class CDCMS_CIL_OOBUOB extends AbstractClassifier implements MultiClassCl
 		
 		public double calculateWeightBaseOnClassSize(Instance inst) {
 			double weight = 1d;
-			int targetClass = this.isUOB ? getMinorityClass() : getMajorityClass();
+			int targetClass = this.isUS ? getMinorityClass() : getMajorityClass();
 			
 			weight = this.getClassSize(targetClass) / this.getClassSize((int) inst.classValue());
 
